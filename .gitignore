@@ -9,3 +9,4 @@ tiktok_pid_extractor.py
 tiktok_pid_playwright.py
 tiktok-pid-extension.zip
 .DS_Store
+.claude/settings.local.json
