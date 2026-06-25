@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TikTok PID Extractor</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f5f5f4;
+    --surface: #ffffff;
+    --surface2: #f5f5f4;
+    --border: rgba(0,0,0,0.1);
+    --border-md: rgba(0,0,0,0.18);
+    --text: #1a1a1a;
+    --text-2: #6b7280;
+    --text-3: #9ca3af;
+    --accent: #FE2C55;
+    --accent-h: #e0193f;
+    --green: #16a34a;
+    --green-bg: #f0fdf4;
+    --red: #dc2626;
+    --red-bg: #fef2f2;
+    --warn: #d97706;
+    --warn-bg: #fffbeb;
+    --blue: #2563eb;
+    --amber: #d97706;
+    --amber-bg: #fffbeb;
+    --radius: 10px;
+    --radius-sm: 6px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111110;
+      --surface: #1c1c1b;
+      --surface2: #232322;
+      --border: rgba(255,255,255,0.08);
+      --border-md: rgba(255,255,255,0.14);
+      --text: #f0efed;
+      --text-2: #9ca3af;
+      --text-3: #6b7280;
+      --green-bg: #052e16;
+      --red-bg: #450a0a;
+      --warn-bg: #451a03;
+      --amber-bg: #451a03;
+    }
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .shell {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 32px 20px 60px;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+  }
+
+  .logo { display: flex; align-items: center; gap: 10px; }
+
+  .logo-icon {
+    width: 34px; height: 34px;
+    background: var(--accent);
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  .logo-name { font-size: 17px; font-weight: 600; letter-spacing: -0.3px; }
+
+  .badge {
+    font-size: 11px; padding: 3px 9px; border-radius: 20px;
+    background: var(--surface2); border: 0.5px solid var(--border); color: var(--text-2);
+  }
+
+  .card {
+    background: var(--surface);
+    border: 0.5px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 12px;
+  }
+
+  /* ── Cookie panel ── */
+  .cookie-panel { padding: 14px 16px; }
+
+  .cookie-header {
+    display: flex; align-items: center; justify-content: space-between;
+    cursor: pointer; user-select: none;
+  }
+
+  .cookie-header-left { display: flex; align-items: center; gap: 8px; }
+
+  .cookie-label { font-size: 13px; font-weight: 500; }
+
+  .cookie-status {
+    font-size: 11px; padding: 2px 9px; border-radius: 20px; font-weight: 500;
+  }
+  .cookie-status.set   { background: var(--green-bg); color: var(--green); }
+  .cookie-status.unset { background: var(--amber-bg); color: var(--amber); }
+
+  .chevron {
+    color: var(--text-3); transition: transform 0.2s;
+    display: flex; align-items: center;
+  }
+  .chevron.open { transform: rotate(180deg); }
+
+  .cookie-body { display: none; margin-top: 12px; }
+  .cookie-body.open { display: block; }
+
+  .cookie-hint {
+    font-size: 12px; color: var(--text-2); margin-bottom: 10px; line-height: 1.6;
+  }
+
+  .cookie-hint code {
+    background: var(--surface2); padding: 1px 5px; border-radius: 4px;
+    font-family: 'SF Mono', monospace; font-size: 11px;
+    border: 0.5px solid var(--border-md);
+  }
+
+  .cookie-hint ol { padding-left: 16px; margin-top: 4px; }
+  .cookie-hint li { margin-bottom: 3px; }
+
+  .cookie-row { display: flex; gap: 8px; align-items: center; }
+
+  .cookie-input {
+    flex: 1;
+    background: var(--surface2);
+    border: 0.5px solid var(--border-md);
+    border-radius: var(--radius-sm);
+    padding: 8px 11px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 12px; color: var(--text); outline: none;
+  }
+  .cookie-input:focus { border-color: var(--accent); }
+  .cookie-input::placeholder { color: var(--text-3); }
+
+  .btn-save {
+    background: var(--text); color: var(--surface);
+    border: none; border-radius: var(--radius-sm);
+    padding: 8px 16px; font-size: 13px; font-weight: 500;
+    cursor: pointer; white-space: nowrap;
+    transition: opacity 0.15s;
+  }
+  .btn-save:hover { opacity: 0.8; }
+
+  /* ── Input card ── */
+  .input-card { padding: 14px 16px; }
+
+  .input-label { font-size: 12px; color: var(--text-2); display: block; margin-bottom: 7px; }
+
+  textarea {
+    width: 100%; height: 120px; resize: vertical;
+    background: var(--surface2);
+    border: 0.5px solid var(--border-md);
+    border-radius: var(--radius-sm);
+    padding: 9px 11px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 12.5px; color: var(--text); outline: none;
+    min-height: 70px; transition: border-color 0.15s;
+  }
+  textarea:focus { border-color: var(--accent); }
+  textarea::placeholder { color: var(--text-3); }
+
+  .input-footer {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 10px;
+  }
+
+  .count-label { font-size: 12px; color: var(--text-3); }
+
+  .btn-run {
+    display: flex; align-items: center; gap: 6px;
+    background: var(--accent); color: white;
+    border: none; border-radius: var(--radius-sm);
+    padding: 8px 20px; font-size: 13.5px; font-weight: 500;
+    cursor: pointer; transition: background 0.15s, opacity 0.15s;
+  }
+  .btn-run:hover { background: var(--accent-h); }
+  .btn-run:disabled { opacity: 0.45; cursor: not-allowed; }
+
+  /* ── Metrics ── */
+  .metrics { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-bottom: 12px; }
+
+  .metric {
+    background: var(--surface); border: 0.5px solid var(--border);
+    border-radius: var(--radius); padding: 13px 16px;
+  }
+
+  .metric-label { font-size: 11px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 5px; }
+  .metric-value { font-size: 26px; font-weight: 600; color: var(--text); }
+  .metric-value.green { color: var(--green); }
+  .metric-value.red { color: var(--red); }
+
+  /* ── Result table ── */
+  .result-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px; border-bottom: 0.5px solid var(--border);
+  }
+
+  .result-title { font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+
+  .spinner {
+    width: 13px; height: 13px;
+    border: 2px solid var(--border-md); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 0.7s linear infinite; display: none;
+  }
+  .spinner.active { display: block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .btn-export {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 12px; padding: 5px 12px; border-radius: var(--radius-sm);
+    background: transparent; border: 0.5px solid var(--border-md);
+    color: var(--text); cursor: pointer; transition: background 0.15s;
+  }
+  .btn-export:hover { background: var(--surface2); }
+  .btn-export:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .progress-bar-wrap { height: 2px; background: var(--surface2); display: none; }
+  .progress-bar-wrap.active { display: block; }
+  .progress-bar { height: 100%; background: var(--accent); transition: width 0.3s ease; width: 0%; }
+
+  .table-wrap { overflow-x: auto; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+
+  thead tr { background: var(--surface2); }
+
+  th {
+    text-align: left; padding: 8px 14px;
+    font-weight: 500; font-size: 11px; color: var(--text-2);
+    text-transform: uppercase; letter-spacing: 0.4px; white-space: nowrap;
+  }
+
+  td { padding: 10px 14px; border-top: 0.5px solid var(--border); vertical-align: middle; }
+
+  .cell-author { max-width: 190px; }
+  .author { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .desc { font-size: 11px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+
+  .mono { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11.5px; color: var(--text-2); }
+
+  .pid-cell { display: flex; align-items: center; gap: 5px; }
+  .pid-val { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11.5px; color: var(--blue); }
+
+  .btn-copy {
+    background: none; border: none; cursor: pointer;
+    color: var(--text-3); padding: 2px 4px; border-radius: 4px;
+    display: flex; align-items: center; transition: color 0.1s, background 0.1s;
+  }
+  .btn-copy:hover { color: var(--text); background: var(--surface2); }
+
+  .status-badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 500; white-space: nowrap; }
+  .status-ok      { background: var(--green-bg); color: var(--green); }
+  .status-error   { background: var(--red-bg); color: var(--red); }
+  .status-warn    { background: var(--warn-bg); color: var(--warn); }
+  .status-processing { background: var(--surface2); color: var(--text-3); }
+
+  .link-btn { color: var(--text-3); display: flex; align-items: center; text-decoration: none; transition: color 0.1s; }
+  .link-btn:hover { color: var(--text); }
+
+  .empty-state { padding: 48px 16px; text-align: center; color: var(--text-3); font-size: 13px; }
+  .empty-icon { margin-bottom: 10px; opacity: 0.25; }
+
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: var(--text); color: var(--surface);
+    font-size: 13px; padding: 9px 20px; border-radius: 20px;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s;
+    white-space: nowrap; z-index: 999;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <header>
+    <div class="logo">
+      <div class="logo-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-2.88 2.5 2.89 2.89 0 0 1-2.89-2.89 2.89 2.89 0 0 1 2.89-2.89c.28 0 .54.04.79.1V9.01a6.32 6.32 0 0 0-.79-.05 6.34 6.34 0 0 0-6.34 6.34 6.34 6.34 0 0 0 6.34 6.34 6.34 6.34 0 0 0 6.33-6.34V9.05a8.17 8.17 0 0 0 4.78 1.52V7.13a4.85 4.85 0 0 1-1.01-.44z"/></svg>
+      </div>
+      <span class="logo-name">TikTok PID Extractor</span>
+    </div>
+    <span class="badge">v2.0</span>
+  </header>
+
+  <!-- Cookie panel -->
+  <div class="card">
+    <div class="cookie-panel">
+      <div class="cookie-header" onclick="toggleCookie()">
+        <div class="cookie-header-left">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-2)"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span class="cookie-label">TikTok Session</span>
+          <span class="cookie-status" id="cookie-status">Chưa cài</span>
+        </div>
+        <div class="chevron" id="chevron">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+      </div>
+
+      <div class="cookie-body" id="cookie-body">
+        <div class="cookie-hint">
+          Lấy <code>sessionid</code> từ TikTok:
+          <ol>
+            <li>Mở <strong>tiktok.com</strong> trên Chrome, đăng nhập tài khoản</li>
+            <li>Nhấn <code>F12</code> → tab <strong>Application</strong> → <strong>Cookies</strong> → <code>https://www.tiktok.com</code></li>
+            <li>Tìm dòng <code>sessionid</code> → copy giá trị cột <strong>Value</strong></li>
+          </ol>
+        </div>
+        <div class="cookie-row">
+          <input class="cookie-input" id="session-input" type="password" placeholder="Dán sessionid vào đây..." autocomplete="off" />
+          <button class="btn-save" onclick="saveCookie()">Lưu</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Input -->
+  <div class="card input-card">
+    <label class="input-label" for="input-area">Dán video ID hoặc link TikTok — mỗi dòng 1 video</label>
+    <textarea id="input-area" placeholder="7591500512403508487&#10;https://www.tiktok.com/@user/video/7555844889297079560&#10;7617058362840157461"></textarea>
+    <div class="input-footer">
+      <span class="count-label" id="count-label">0 video</span>
+      <button class="btn-run" id="btn-run">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        Lấy PID
+      </button>
+    </div>
+  </div>
+
+  <!-- Metrics -->
+  <div class="metrics">
+    <div class="metric">
+      <div class="metric-label">Đã xử lý</div>
+      <div class="metric-value" id="m-total">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Có PID</div>
+      <div class="metric-value green" id="m-ok">—</div>
+    </div>
+    <div class="metric">
+      <div class="metric-label">Không có</div>
+      <div class="metric-value red" id="m-err">—</div>
+    </div>
+  </div>
+
+  <!-- Results -->
+  <div class="card">
+    <div class="result-header">
+      <div class="result-title">
+        <div class="spinner" id="spinner"></div>
+        Kết quả
+      </div>
+      <button class="btn-export" id="btn-export" disabled>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Export CSV
+      </button>
+    </div>
+    <div class="progress-bar-wrap" id="progress-wrap">
+      <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <colgroup>
+          <col style="width:210px"><col style="width:175px"><col style="width:175px"><col style="width:95px"><col style="width:40px">
+        </colgroup>
+        <thead>
+          <tr>
+            <th>Tác giả / Mô tả</th>
+            <th>Video ID</th>
+            <th>Product ID</th>
+            <th>Trạng thái</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="5">
+            <div class="empty-state">
+              <div class="empty-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></div>
+              Chưa có kết quả — nhập video ID và bấm Lấy PID
+            </div>
+          </td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Cookie ──────────────────────────────────────────────────────────
+let sessionId = localStorage.getItem('tt_sessionid') || '';
+
+function updateCookieStatus() {
+  const el = document.getElementById('cookie-status');
+  if (sessionId) {
+    el.textContent = 'Đã cài';
+    el.className = 'cookie-status set';
+  } else {
+    el.textContent = 'Chưa cài';
+    el.className = 'cookie-status unset';
+  }
+}
+
+function toggleCookie() {
+  const body = document.getElementById('cookie-body');
+  const chevron = document.getElementById('chevron');
+  const open = body.classList.toggle('open');
+  chevron.classList.toggle('open', open);
+  if (open && sessionId) {
+    document.getElementById('session-input').value = sessionId;
+  }
+}
+
+function saveCookie() {
+  const val = document.getElementById('session-input').value.trim();
+  if (!val) { showToast('Vui lòng nhập sessionid'); return; }
+  sessionId = val;
+  localStorage.setItem('tt_sessionid', val);
+  updateCookieStatus();
+  document.getElementById('cookie-body').classList.remove('open');
+  document.getElementById('chevron').classList.remove('open');
+  showToast('Đã lưu Session ID');
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+updateCookieStatus();
+
+// ── Input counter ────────────────────────────────────────────────────
+const textarea   = document.getElementById('input-area');
+const countLabel = document.getElementById('count-label');
+const btnRun     = document.getElementById('btn-run');
+const btnExport  = document.getElementById('btn-export');
+const tbody      = document.getElementById('tbody');
+const spinner    = document.getElementById('spinner');
+const progressWrap = document.getElementById('progress-wrap');
+const progressBar  = document.getElementById('progress-bar');
+const mTotal = document.getElementById('m-total');
+const mOk    = document.getElementById('m-ok');
+const mErr   = document.getElementById('m-err');
+
+let allResults = [];
+
+function getLines() {
+  return textarea.value.split('\n').map(l => l.trim()).filter(Boolean);
+}
+
+textarea.addEventListener('input', () => {
+  const n = getLines().length;
+  countLabel.textContent = n ? `${n} video` : '0 video';
+});
+
+function setMetrics(total, ok, err) {
+  const blank = total === 0 && ok === 0 && err === 0;
+  mTotal.textContent = blank ? '—' : total;
+  mOk.textContent    = blank ? '—' : ok;
+  mErr.textContent   = blank ? '—' : err;
+}
+
+function copyIcon() {
+  return `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
+}
+
+function checkIcon() {
+  return `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+}
+
+function copyText(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    btn.innerHTML = checkIcon();
+    setTimeout(() => { btn.innerHTML = copyIcon(); }, 1200);
+  });
+}
+
+function renderRow(r, placeholder = false) {
+  const vid    = r.video_id || '—';
+  const pids   = r.pids || [];
+  const author = r.author || '';
+
+  const authorCell = placeholder
+    ? `<div class="cell-author"><div class="author" style="color:var(--text-3)">Đang tải...</div></div>`
+    : author
+      ? `<div class="cell-author"><div class="author">@${author}</div><div class="desc">${r.desc || ''}</div></div>`
+      : `<div class="cell-author"><div class="desc" style="color:var(--text-3)">${r.error || '—'}</div></div>`;
+
+  const pidCell = placeholder
+    ? `<span class="mono" style="color:var(--text-3)">—</span>`
+    : pids.length === 0
+      ? `<span class="mono" style="color:var(--text-3)">—</span>`
+      : pids.map(pid => `
+          <div class="pid-cell">
+            <span class="pid-val">${pid}</span>
+            <button class="btn-copy" data-pid="${pid}" title="Copy">${copyIcon()}</button>
+          </div>`).join('');
+
+  const badge = placeholder
+    ? `<span class="status-badge status-processing">Đang xử lý</span>`
+    : r.status === 'ok' && pids.length > 0
+      ? `<span class="status-badge status-ok">OK</span>`
+      : r.status === 'ok'
+        ? `<span class="status-badge status-warn">Không có SP</span>`
+        : `<span class="status-badge status-error" title="${r.error || ''}">Lỗi</span>`;
+
+  const linkCell = vid !== '—'
+    ? `<a class="link-btn" href="https://www.tiktok.com/@${author||'x'}/video/${vid}" target="_blank" title="Mở video">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+      </a>` : '';
+
+  return `<td>${authorCell}</td><td><span class="mono">${vid}</span></td><td>${pidCell}</td><td>${badge}</td><td>${linkCell}</td>`;
+}
+
+tbody.addEventListener('click', e => {
+  const btn = e.target.closest('.btn-copy');
+  if (btn) copyText(btn.dataset.pid, btn);
+});
+
+async function startExtract() {
+  const inputs = getLines();
+  if (!inputs.length) return;
+
+  if (!sessionId) {
+    showToast('Vui lòng cài Session ID trước');
+    document.getElementById('cookie-body').classList.add('open');
+    document.getElementById('chevron').classList.add('open');
+    return;
+  }
+
+  allResults = [];
+  btnRun.disabled = true;
+  btnExport.disabled = true;
+  spinner.classList.add('active');
+  progressWrap.classList.add('active');
+  progressBar.style.width = '0%';
+  setMetrics(0, 0, 0);
+
+  tbody.innerHTML = inputs.map((raw, i) => {
+    const guessId = raw.match(/\d{15,20}/)?.[0] || raw;
+    return `<tr id="row-${i}">${renderRow({ video_id: guessId, pids: [], status: 'processing' }, true)}</tr>`;
+  }).join('');
+
+  let processed = 0, okCount = 0, errCount = 0;
+
+  try {
+    const resp = await fetch('/api/extract', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ inputs, sessionid: sessionId }),
+    });
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop();
+
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue;
+        const payload = line.slice(6).trim();
+        if (payload === '__done__') break;
+
+        let result;
+        try { result = JSON.parse(payload); } catch { continue; }
+
+        if (result.status === 'fatal') {
+          showToast('Lỗi: ' + result.error);
+          continue;
+        }
+
+        allResults.push(result);
+        const idx = processed++;
+
+        if (result.status === 'ok' && result.pids?.length > 0) okCount++;
+        else errCount++;
+
+        setMetrics(processed, okCount, errCount);
+        progressBar.style.width = `${Math.round((processed / inputs.length) * 100)}%`;
+
+        const row = document.getElementById(`row-${idx}`);
+        if (row) row.innerHTML = renderRow(result);
+      }
+    }
+  } catch (e) {
+    showToast('Lỗi kết nối server');
+  }
+
+  spinner.classList.remove('active');
+  progressWrap.classList.remove('active');
+  btnRun.disabled = false;
+  if (allResults.length) btnExport.disabled = false;
+}
+
+function exportCSV() {
+  const rows = [['input','video_id','author','product_id','desc','status','error']];
+  for (const r of allResults) {
+    if (r.pids?.length > 0) {
+      for (const pid of r.pids)
+        rows.push([r.input||'', r.video_id||'', r.author||'', pid, r.desc||'', r.status, '']);
+    } else {
+      rows.push([r.input||'', r.video_id||'', r.author||'', '', r.desc||'', r.status, r.error||'']);
+    }
+  }
+  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+  const blob = new Blob(['﻿'+csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url;
+  a.download = `tiktok_pids_${new Date().toISOString().slice(0,19).replace(/[T:]/g,'-')}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+btnRun.addEventListener('click', startExtract);
+btnExport.addEventListener('click', exportCSV);
+</script>
+</body>
+</html>
