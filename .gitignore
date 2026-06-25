@@ -2,10 +2,10 @@ venv/
 __pycache__/
 *.pyc
 *.csv
-*.json
 *.html.bak
 debug_*.html
 raw_*.json
 tiktok_pid_extractor.py
 tiktok_pid_playwright.py
 tiktok-pid-extension.zip
+.DS_Store
