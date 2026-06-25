@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "tiktok-pid-web",
+      "runtimeExecutable": "/Users/thanhbinh/tiktok-tool/venv/bin/python3",
+      "runtimeArgs": ["web_app.py"],
+      "port": 3004
+    }
+  ]
+}
