@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from playwright.async_api import async_playwright
+from playwright_stealth import stealth_async
 
 def parse_cookies_json(cookies_json: str) -> list:
     """Convert browser-exported cookie JSON array to Playwright cookie format."""
@@ -82,13 +83,14 @@ def parse_html_for_item(html):
 
 async def fetch_video(video_id, context):
     page = await context.new_page()
+    await stealth_async(page)
     try:
         await page.goto(
             f"https://www.tiktok.com/@x/video/{video_id}",
-            wait_until="domcontentloaded",
-            timeout=25000,
+            wait_until="networkidle",
+            timeout=30000,
         )
-        await asyncio.sleep(1)
+        await asyncio.sleep(1.5)
     except Exception:
         pass
     html = await page.content()
