@@ -3,7 +3,6 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from playwright.async_api import async_playwright
-from playwright_stealth import stealth_async
 
 def parse_cookies_json(cookies_json: str) -> list:
     """Convert browser-exported cookie JSON array to Playwright cookie format."""
@@ -83,20 +82,34 @@ def parse_html_for_item(html):
 
 async def fetch_video(video_id, context):
     page = await context.new_page()
-    await stealth_async(page)
+    captured = {}
+
+    async def on_response(response):
+        try:
+            if "/api/item/detail/" in response.url and "itemId" in response.url:
+                data = await response.json()
+                struct = (data.get("itemInfo") or {}).get("itemStruct")
+                if struct:
+                    captured["item"] = struct
+        except Exception:
+            pass
+
+    page.on("response", on_response)
+
     try:
         await page.goto(
             f"https://www.tiktok.com/@x/video/{video_id}",
             wait_until="networkidle",
             timeout=30000,
         )
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(2)
     except Exception:
         pass
-    html = await page.content()
+
+    # Prefer API-captured item, fall back to SSR HTML
+    item = captured.get("item") or parse_html_for_item(await page.content())
     await page.close()
 
-    item = parse_html_for_item(html)
     if item is None:
         return {"video_id": video_id, "status": "error", "pids": [], "error": "Không lấy được data"}
 
