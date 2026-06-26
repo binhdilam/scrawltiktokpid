@@ -1,156 +1,9 @@
-function parseInput(raw) {
+// Popup chỉ hiển thị UI và giao tiếp với background.js
+
+function parseInputPreview(raw) {
   raw = raw.trim();
-  const m = raw.match(/\/video\/(\d+)/);
-  if (m) return m[1];
-  if (/^\d{15,20}$/.test(raw)) return raw;
-  return null;
-}
-
-function extractPids(item) {
-  const pids = [];
-
-  for (const p of item?.commerce?.commerceInfo?.productItems || []) {
-    const pid = String(p.productId || p.id || '');
-    if (pid && !pids.includes(pid)) pids.push(pid);
-  }
-
-  for (const anchor of item?.anchors || []) {
-    let extra = anchor.extra || anchor.anchorExtra || {};
-    if (typeof extra === 'string') {
-      try { extra = JSON.parse(extra); } catch { extra = {}; }
-    }
-    const items = Array.isArray(extra) ? extra : [extra];
-    for (const ex of items) {
-      if (typeof ex !== 'object' || !ex) continue;
-      const pid = String(ex.productId || ex.product_id || ex.id || '');
-      if (pid && /^\d{10,20}$/.test(pid) && !pids.includes(pid)) pids.push(pid);
-    }
-  }
-
-  for (const sticker of item?.stickersOnItem || []) {
-    if (sticker.stickerType === 2) {
-      for (const text of sticker.stickerText || []) {
-        const t = String(text);
-        if (/^\d{10,20}$/.test(t) && !pids.includes(t)) pids.push(t);
-      }
-    }
-  }
-
-  return pids;
-}
-
-// Poll tab until itemStruct is present, then extract. Retry once if empty.
-function readDataFromTab(tabId) {
-  return new Promise((resolve) => {
-    const POLL_INTERVAL = 600;
-    const MAX_WAIT = 15000;
-    const start = Date.now();
-
-    function poll() {
-      chrome.scripting.executeScript({
-        target: { tabId },
-        func: () => {
-          const el = document.querySelector('script#__UNIVERSAL_DATA_FOR_REHYDRATION__');
-          if (!el) return null;
-          try {
-            const data = JSON.parse(el.textContent);
-            const item = data?.__DEFAULT_SCOPE__?.['webapp.video-detail']?.itemInfo?.itemStruct;
-            if (!item) return null;
-            return el.textContent;
-          } catch { return null; }
-        },
-      }, (results) => {
-        const raw = results?.[0]?.result;
-        if (raw) { resolve(raw); return; }
-        if (Date.now() - start > MAX_WAIT) { resolve(null); return; }
-        setTimeout(poll, POLL_INTERVAL);
-      });
-    }
-
-    poll();
-  });
-}
-
-function fetchVideoViaTab(videoId) {
-  return new Promise((resolve) => {
-    const url = `https://www.tiktok.com/@x/video/${videoId}`;
-
-    chrome.tabs.create({ url, active: false }, (tab) => {
-      const tabId = tab.id;
-
-      const hardTimeout = setTimeout(() => {
-        chrome.tabs.remove(tabId).catch(() => {});
-        resolve({ video_id: videoId, status: 'error', pids: [], error: 'Timeout (30s)' });
-      }, 30000);
-
-      function onUpdated(updatedId, info) {
-        if (updatedId !== tabId || info.status !== 'complete') return;
-        chrome.tabs.onUpdated.removeListener(onUpdated);
-
-        readDataFromTab(tabId).then((raw) => {
-          clearTimeout(hardTimeout);
-          chrome.tabs.remove(tabId).catch(() => {});
-
-          if (!raw) {
-            resolve({ video_id: videoId, status: 'error', pids: [], error: 'Không lấy được data — hãy mở TikTok và đăng nhập trước' });
-            return;
-          }
-
-          try {
-            const data = JSON.parse(raw);
-            const item = data?.__DEFAULT_SCOPE__?.['webapp.video-detail']?.itemInfo?.itemStruct;
-            if (!item) {
-              resolve({ video_id: videoId, status: 'error', pids: [], error: 'Không tìm thấy video' });
-              return;
-            }
-            resolve({
-              video_id: videoId,
-              status: 'ok',
-              pids: extractPids(item),
-              author: item.author?.uniqueId || '',
-              desc: (item.desc || '').slice(0, 100),
-            });
-          } catch {
-            resolve({ video_id: videoId, status: 'error', pids: [], error: 'Parse error' });
-          }
-        });
-      }
-
-      chrome.tabs.onUpdated.addListener(onUpdated);
-    });
-  });
-}
-
-// ── UI ──────────────────────────────────────────────────────────────
-
-const textarea     = document.getElementById('input-area');
-const countLabel   = document.getElementById('count-label');
-const btnRun       = document.getElementById('btn-run');
-const btnExport    = document.getElementById('btn-export');
-const tbody        = document.getElementById('tbody');
-const spinner      = document.getElementById('spinner');
-const progressWrap = document.getElementById('progress-wrap');
-const progressBar  = document.getElementById('progress-bar');
-const mTotal = document.getElementById('m-total');
-const mOk    = document.getElementById('m-ok');
-const mErr   = document.getElementById('m-err');
-
-let allResults = [];
-
-function getLines() {
-  return textarea.value.split('\n').map(l => l.trim()).filter(Boolean);
-}
-
-textarea.addEventListener('input', () => {
-  const n = getLines().length;
-  countLabel.textContent = n ? `${n} video` : '0 video';
-});
-
-function setMetrics(total, ok, err) {
-  const blank = total === 0 && ok === 0 && err === 0;
-  mTotal.textContent = blank ? '—' : total;
-  mOk.textContent    = blank ? '—' : ok;
-  mErr.textContent   = blank ? '—' : err;
+  const m = raw.match(/\d{15,20}/);
+  return m ? m[0] : raw;
 }
 
 function copyIcon() {
@@ -198,73 +51,143 @@ function renderRow(r, placeholder = false) {
         : `<span class="status-badge status-error" title="${r.error || ''}">Lỗi</span>`;
 
   const linkCell = vid !== '—'
-    ? `<a class="link-btn" href="https://www.tiktok.com/@${author || 'x'}/video/${vid}" target="_blank" title="Mở video">
+    ? `<a class="link-btn" href="https://www.tiktok.com/@${author || 'x'}/video/${vid}" target="_blank">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-      </a>`
-    : '';
+      </a>` : '';
 
   return `<td>${authorCell}</td><td><span class="mono">${vid}</span></td><td>${pidCell}</td><td>${badge}</td><td>${linkCell}</td>`;
 }
 
-tbody.addEventListener('click', e => {
-  const btn = e.target.closest('.btn-copy');
-  if (btn) copyText(btn.dataset.pid, btn);
+// ── State ────────────────────────────────────────────────────────────
+const textarea     = document.getElementById('input-area');
+const countLabel   = document.getElementById('count-label');
+const btnRun       = document.getElementById('btn-run');
+const btnExport    = document.getElementById('btn-export');
+const tbody        = document.getElementById('tbody');
+const spinner      = document.getElementById('spinner');
+const progressWrap = document.getElementById('progress-wrap');
+const progressBar  = document.getElementById('progress-bar');
+const mTotal = document.getElementById('m-total');
+const mOk    = document.getElementById('m-ok');
+const mErr   = document.getElementById('m-err');
+
+let allResults = [];
+let isRunning  = false;
+
+function getLines() {
+  return textarea.value.split('\n').map(l => l.trim()).filter(Boolean);
+}
+
+textarea.addEventListener('input', () => {
+  const n = getLines().length;
+  countLabel.textContent = n ? `${n} video` : '0 video';
 });
 
+function setMetrics(total, ok, err) {
+  const blank = total === 0 && ok === 0 && err === 0;
+  mTotal.textContent = blank ? '—' : total;
+  mOk.textContent    = blank ? '—' : ok;
+  mErr.textContent   = blank ? '—' : err;
+}
+
+function setRunning(running, total) {
+  isRunning = running;
+  btnRun.disabled = running;
+  spinner.classList.toggle('active', running);
+  progressWrap.classList.toggle('active', running);
+  if (!running) {
+    progressBar.style.width = '100%';
+    setTimeout(() => progressWrap.classList.remove('active'), 600);
+  }
+}
+
+// Rebuild table from stored results (when popup reopens mid-batch)
+function restoreTable(inputs, results) {
+  const total = inputs.length;
+  tbody.innerHTML = inputs.map((raw, i) => {
+    const guessId = parseInputPreview(raw);
+    const r = results[i];
+    if (!r) return `<tr id="row-${i}">${renderRow({ video_id: guessId, pids: [], status: 'processing' }, true)}</tr>`;
+    return `<tr id="row-${i}">${renderRow(r)}</tr>`;
+  }).join('');
+
+  let ok = 0, err = 0;
+  for (const r of results) {
+    if (r.status === 'ok' && r.pids?.length > 0) ok++;
+    else err++;
+  }
+  setMetrics(results.length, ok, err);
+  progressBar.style.width = `${Math.round((results.length / total) * 100)}%`;
+  allResults = [...results];
+  if (allResults.length) btnExport.disabled = false;
+}
+
+// Handle live progress messages from background
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === 'progress') {
+    const { index, total, result } = msg;
+    allResults[index] = result;
+
+    let ok = 0, err = 0;
+    for (const r of allResults) {
+      if (!r) continue;
+      if (r.status === 'ok' && r.pids?.length > 0) ok++;
+      else err++;
+    }
+    const processed = allResults.filter(Boolean).length;
+    setMetrics(processed, ok, err);
+    progressBar.style.width = `${Math.round(((index + 1) / total) * 100)}%`;
+
+    const row = document.getElementById(`row-${index}`);
+    if (row) row.innerHTML = renderRow(result);
+    if (allResults.filter(Boolean).length) btnExport.disabled = false;
+  }
+
+  if (msg.type === 'done') {
+    setRunning(false);
+  }
+});
+
+// On popup open: restore state if background is running
+chrome.runtime.sendMessage({ action: 'getState' }, (state) => {
+  if (!state) return;
+  const { running, inputs = [], results = [] } = state;
+
+  if (inputs.length) {
+    textarea.value = inputs.join('\n');
+    countLabel.textContent = `${inputs.length} video`;
+    restoreTable(inputs, results);
+  }
+
+  if (running) {
+    setRunning(true, inputs.length);
+  }
+});
+
+// Start batch
 async function startExtract() {
   const inputs = getLines();
-  if (!inputs.length) return;
+  if (!inputs.length || isRunning) return;
 
   allResults = [];
-  btnRun.disabled = true;
   btnExport.disabled = true;
-  spinner.classList.add('active');
-  progressWrap.classList.add('active');
-  progressBar.style.width = '0%';
   setMetrics(0, 0, 0);
+  setRunning(true, inputs.length);
+  progressBar.style.width = '0%';
 
   tbody.innerHTML = inputs.map((raw, i) => {
-    const guessId = raw.match(/\d{15,20}/)?.[0] || raw;
+    const guessId = parseInputPreview(raw);
     return `<tr id="row-${i}">${renderRow({ video_id: guessId, pids: [], status: 'processing' }, true)}</tr>`;
   }).join('');
 
-  let processed = 0, okCount = 0, errCount = 0;
-
-  for (let i = 0; i < inputs.length; i++) {
-    const raw = inputs[i];
-    const videoId = parseInput(raw);
-    let result;
-
-    if (!videoId) {
-      result = { input: raw, video_id: '—', status: 'error', pids: [], error: 'Không parse được ID' };
-    } else {
-      result = await fetchVideoViaTab(videoId);
-      result.input = raw;
-    }
-
-    allResults.push(result);
-    processed++;
-
-    if (result.status === 'ok' && result.pids.length > 0) okCount++;
-    else errCount++;
-
-    setMetrics(processed, okCount, errCount);
-    progressBar.style.width = `${Math.round((processed / inputs.length) * 100)}%`;
-
-    const row = document.getElementById(`row-${i}`);
-    if (row) row.innerHTML = renderRow(result);
-  }
-
-  spinner.classList.remove('active');
-  progressWrap.classList.remove('active');
-  btnRun.disabled = false;
-  if (allResults.length) btnExport.disabled = false;
+  chrome.runtime.sendMessage({ action: 'start', inputs });
 }
 
 function exportCSV() {
   const rows = [['input', 'video_id', 'author', 'product_id', 'desc', 'status', 'error']];
   for (const r of allResults) {
-    if (r.pids && r.pids.length > 0) {
+    if (!r) continue;
+    if (r.pids?.length > 0) {
       for (const pid of r.pids)
         rows.push([r.input || '', r.video_id || '', r.author || '', pid, r.desc || '', r.status, '']);
     } else {
@@ -280,6 +203,11 @@ function exportCSV() {
   a.click();
   URL.revokeObjectURL(url);
 }
+
+tbody.addEventListener('click', e => {
+  const btn = e.target.closest('.btn-copy');
+  if (btn) copyText(btn.dataset.pid, btn);
+});
 
 btnRun.addEventListener('click', startExtract);
 btnExport.addEventListener('click', exportCSV);

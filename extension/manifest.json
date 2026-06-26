@@ -1,10 +1,13 @@
 {
   "manifest_version": 3,
   "name": "TikTok PID Extractor",
-  "version": "2.0",
+  "version": "2.1",
   "description": "Lấy Product ID từ video TikTok có gắn sản phẩm",
-  "permissions": ["tabs", "scripting"],
+  "permissions": ["tabs", "scripting", "storage"],
   "host_permissions": ["https://www.tiktok.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
     "default_popup": "popup.html",
     "default_title": "TikTok PID Extractor"
