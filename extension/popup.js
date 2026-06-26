@@ -1,19 +1,144 @@
-// Popup chỉ hiển thị UI và giao tiếp với background.js
+// Batch logic chạy trực tiếp trong window context (ổn định hơn service worker)
+
+function parseInput(raw) {
+  raw = raw.trim();
+  const m = raw.match(/\/video\/(\d+)/);
+  if (m) return m[1];
+  if (/^\d{15,20}$/.test(raw)) return raw;
+  return null;
+}
+
+function extractPids(item) {
+  const pids = [];
+
+  for (const p of item?.commerce?.commerceInfo?.productItems || []) {
+    const pid = String(p.productId || p.id || '');
+    if (pid && !pids.includes(pid)) pids.push(pid);
+  }
+
+  for (const anchor of item?.anchors || []) {
+    let extra = anchor.extra || anchor.anchorExtra || {};
+    if (typeof extra === 'string') {
+      try { extra = JSON.parse(extra); } catch { extra = {}; }
+    }
+    const items = Array.isArray(extra) ? extra : [extra];
+    for (const ex of items) {
+      if (typeof ex !== 'object' || !ex) continue;
+      const pid = String(ex.productId || ex.product_id || ex.id || '');
+      if (pid && /^\d{10,20}$/.test(pid) && !pids.includes(pid)) pids.push(pid);
+    }
+  }
+
+  for (const sticker of item?.stickersOnItem || []) {
+    if (sticker.stickerType === 2) {
+      for (const text of sticker.stickerText || []) {
+        const t = String(text);
+        if (/^\d{10,20}$/.test(t) && !pids.includes(t)) pids.push(t);
+      }
+    }
+  }
+
+  return pids;
+}
+
+// Poll cho đến khi itemStruct xuất hiện trong script tag
+function pollTabForData(tabId) {
+  return new Promise((resolve) => {
+    const POLL_MS = 600;
+    const MAX_MS  = 15000;
+    const start   = Date.now();
+
+    function poll() {
+      chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const el = document.querySelector('script#__UNIVERSAL_DATA_FOR_REHYDRATION__');
+          if (!el) return null;
+          try {
+            const data = JSON.parse(el.textContent);
+            const item = data?.__DEFAULT_SCOPE__?.['webapp.video-detail']?.itemInfo?.itemStruct;
+            return item ? el.textContent : null;
+          } catch { return null; }
+        },
+      }, (results) => {
+        if (chrome.runtime.lastError) {
+          // Tab chưa sẵn sàng, thử lại
+          if (Date.now() - start < MAX_MS) { setTimeout(poll, POLL_MS); return; }
+          resolve(null); return;
+        }
+        const raw = results?.[0]?.result;
+        if (raw) { resolve(raw); return; }
+        if (Date.now() - start > MAX_MS) { resolve(null); return; }
+        setTimeout(poll, POLL_MS);
+      });
+    }
+
+    poll();
+  });
+}
+
+function fetchVideoViaTab(videoId) {
+  return new Promise((resolve) => {
+    const url = `https://www.tiktok.com/@x/video/${videoId}`;
+
+    chrome.tabs.create({ url, active: false }, (tab) => {
+      const tabId = tab.id;
+
+      const hardTimeout = setTimeout(() => {
+        chrome.tabs.remove(tabId).catch(() => {});
+        resolve({ video_id: videoId, status: 'error', pids: [], error: 'Timeout (30s)' });
+      }, 30000);
+
+      function onUpdated(id, info) {
+        if (id !== tabId || info.status !== 'complete') return;
+        chrome.tabs.onUpdated.removeListener(onUpdated);
+
+        pollTabForData(tabId).then((raw) => {
+          clearTimeout(hardTimeout);
+          chrome.tabs.remove(tabId).catch(() => {});
+
+          if (!raw) {
+            resolve({ video_id: videoId, status: 'error', pids: [], error: 'Không lấy được data' });
+            return;
+          }
+          try {
+            const data = JSON.parse(raw);
+            const item = data?.__DEFAULT_SCOPE__?.['webapp.video-detail']?.itemInfo?.itemStruct;
+            if (!item) {
+              resolve({ video_id: videoId, status: 'error', pids: [], error: 'Không tìm thấy video' });
+              return;
+            }
+            resolve({
+              video_id: videoId,
+              status: 'ok',
+              pids: extractPids(item),
+              author: item.author?.uniqueId || '',
+              desc: (item.desc || '').slice(0, 100),
+            });
+          } catch {
+            resolve({ video_id: videoId, status: 'error', pids: [], error: 'Parse error' });
+          }
+        });
+      }
+
+      chrome.tabs.onUpdated.addListener(onUpdated);
+    });
+  });
+}
+
+// ── UI ────────────────────────────────────────────────────────────────
 
 function parseInputPreview(raw) {
-  raw = raw.trim();
-  const m = raw.match(/\d{15,20}/);
-  return m ? m[0] : raw;
+  const m = raw.trim().match(/\d{15,20}/);
+  return m ? m[0] : raw.trim();
 }
 
 function copyIcon() {
   return `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`;
 }
-
 function checkIcon() {
   return `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
 }
-
 function copyText(text, btn) {
   navigator.clipboard.writeText(text).then(() => {
     btn.innerHTML = checkIcon();
@@ -27,15 +152,15 @@ function renderRow(r, placeholder = false) {
   const author = r.author || '';
 
   const authorCell = placeholder
-    ? `<div class="cell-author"><div class="author" style="color:#d1d5db">Đang tải...</div></div>`
+    ? `<div class="cell-author"><div class="author" style="color:#c5ccd8">Đang tải...</div></div>`
     : author
       ? `<div class="cell-author"><div class="author">@${author}</div><div class="desc">${r.desc || ''}</div></div>`
-      : `<div class="cell-author"><div class="desc" style="color:#9ca3af">${r.error || '—'}</div></div>`;
+      : `<div class="cell-author"><div class="desc" style="color:#65708a">${r.error || '—'}</div></div>`;
 
   const pidCell = placeholder
-    ? `<span class="mono" style="color:#d1d5db">—</span>`
+    ? `<span class="mono" style="color:#c5ccd8">—</span>`
     : pids.length === 0
-      ? `<span class="mono" style="color:#d1d5db">—</span>`
+      ? `<span class="mono" style="color:#c5ccd8">—</span>`
       : pids.map(pid => `
           <div class="pid-cell">
             <span class="pid-val">${pid}</span>
@@ -58,7 +183,6 @@ function renderRow(r, placeholder = false) {
   return `<td>${authorCell}</td><td><span class="mono">${vid}</span></td><td>${pidCell}</td><td>${badge}</td><td>${linkCell}</td>`;
 }
 
-// ── State ────────────────────────────────────────────────────────────
 const textarea     = document.getElementById('input-area');
 const countLabel   = document.getElementById('count-label');
 const btnRun       = document.getElementById('btn-run');
@@ -90,97 +214,63 @@ function setMetrics(total, ok, err) {
   mErr.textContent   = blank ? '—' : err;
 }
 
-function setRunning(running, total) {
-  isRunning = running;
-  btnRun.disabled = running;
-  spinner.classList.toggle('active', running);
-  progressWrap.classList.toggle('active', running);
-  if (!running) {
-    progressBar.style.width = '100%';
-    setTimeout(() => progressWrap.classList.remove('active'), 600);
-  }
-}
-
-// Rebuild table from stored results (when popup reopens mid-batch)
-function restoreTable(inputs, results) {
-  const total = inputs.length;
-  tbody.innerHTML = inputs.map((raw, i) => {
-    const guessId = parseInputPreview(raw);
-    const r = results[i];
-    if (!r) return `<tr id="row-${i}">${renderRow({ video_id: guessId, pids: [], status: 'processing' }, true)}</tr>`;
-    return `<tr id="row-${i}">${renderRow(r)}</tr>`;
-  }).join('');
-
-  let ok = 0, err = 0;
-  for (const r of results) {
-    if (r.status === 'ok' && r.pids?.length > 0) ok++;
-    else err++;
-  }
-  setMetrics(results.length, ok, err);
-  progressBar.style.width = `${Math.round((results.length / total) * 100)}%`;
-  allResults = [...results];
-  if (allResults.length) btnExport.disabled = false;
-}
-
-// Handle live progress messages from background
-chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === 'progress') {
-    const { index, total, result } = msg;
-    allResults[index] = result;
-
-    let ok = 0, err = 0;
-    for (const r of allResults) {
-      if (!r) continue;
-      if (r.status === 'ok' && r.pids?.length > 0) ok++;
-      else err++;
-    }
-    const processed = allResults.filter(Boolean).length;
-    setMetrics(processed, ok, err);
-    progressBar.style.width = `${Math.round(((index + 1) / total) * 100)}%`;
-
-    const row = document.getElementById(`row-${index}`);
-    if (row) row.innerHTML = renderRow(result);
-    if (allResults.filter(Boolean).length) btnExport.disabled = false;
-  }
-
-  if (msg.type === 'done') {
-    setRunning(false);
-  }
+tbody.addEventListener('click', e => {
+  const btn = e.target.closest('.btn-copy');
+  if (btn) copyText(btn.dataset.pid, btn);
 });
 
-// On popup open: restore state if background is running
-chrome.runtime.sendMessage({ action: 'getState' }, (state) => {
-  if (!state) return;
-  const { running, inputs = [], results = [] } = state;
-
-  if (inputs.length) {
-    textarea.value = inputs.join('\n');
-    countLabel.textContent = `${inputs.length} video`;
-    restoreTable(inputs, results);
-  }
-
-  if (running) {
-    setRunning(true, inputs.length);
-  }
-});
-
-// Start batch
 async function startExtract() {
   const inputs = getLines();
   if (!inputs.length || isRunning) return;
 
+  isRunning = true;
   allResults = [];
+  btnRun.disabled = true;
   btnExport.disabled = true;
-  setMetrics(0, 0, 0);
-  setRunning(true, inputs.length);
+  spinner.classList.add('active');
+  progressWrap.classList.add('active');
   progressBar.style.width = '0%';
+  setMetrics(0, 0, 0);
 
   tbody.innerHTML = inputs.map((raw, i) => {
     const guessId = parseInputPreview(raw);
     return `<tr id="row-${i}">${renderRow({ video_id: guessId, pids: [], status: 'processing' }, true)}</tr>`;
   }).join('');
 
-  chrome.runtime.sendMessage({ action: 'start', inputs });
+  let processed = 0, okCount = 0, errCount = 0;
+
+  for (let i = 0; i < inputs.length; i++) {
+    const raw     = inputs[i];
+    const videoId = parseInput(raw);
+    let result;
+
+    if (!videoId) {
+      result = { input: raw, video_id: '—', status: 'error', pids: [], error: 'Không parse được ID' };
+    } else {
+      result = await fetchVideoViaTab(videoId);
+      result.input = raw;
+    }
+
+    allResults.push(result);
+    processed++;
+    if (result.status === 'ok' && result.pids.length > 0) okCount++;
+    else errCount++;
+
+    setMetrics(processed, okCount, errCount);
+    progressBar.style.width = `${Math.round((processed / inputs.length) * 100)}%`;
+
+    const row = document.getElementById(`row-${i}`);
+    if (row) row.innerHTML = renderRow(result);
+  }
+
+  spinner.classList.remove('active');
+  progressWrap.classList.remove('active');
+  btnRun.disabled = false;
+  isRunning = false;
+  if (allResults.length) btnExport.disabled = false;
+
+  // Gửi notification qua background
+  chrome.runtime.sendMessage({ action: 'notify', ok: okCount, err: errCount, total: inputs.length });
 }
 
 function exportCSV() {
@@ -203,11 +293,6 @@ function exportCSV() {
   a.click();
   URL.revokeObjectURL(url);
 }
-
-tbody.addEventListener('click', e => {
-  const btn = e.target.closest('.btn-copy');
-  if (btn) copyText(btn.dataset.pid, btn);
-});
 
 btnRun.addEventListener('click', startExtract);
 btnExport.addEventListener('click', exportCSV);
