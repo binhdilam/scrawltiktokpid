@@ -122,6 +122,15 @@ async function emit(type, payload) {
   }
   if (type === 'done') {
     await chrome.storage.session.set({ running: false });
+    const { results = [] } = await chrome.storage.session.get('results');
+    const ok  = results.filter(r => r.status === 'ok' && r.pids?.length > 0).length;
+    const err = results.length - ok;
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icon48.png',
+      title: 'TikTok PID Extractor — Xong!',
+      message: `✅ ${ok} có PID   ❌ ${err} không có   (${results.length} video)`,
+    });
   }
 
   // Try to message popup (may not be open — ignore error)
@@ -148,6 +157,40 @@ async function runBatch(inputs) {
 
   await emit('done', {});
 }
+
+// Open standalone window (stays open when user clicks elsewhere)
+let toolWindowId = null;
+
+chrome.action.onClicked.addListener(() => {
+  if (toolWindowId !== null) {
+    chrome.windows.get(toolWindowId, (win) => {
+      if (chrome.runtime.lastError || !win) {
+        toolWindowId = null;
+        openWindow();
+      } else {
+        chrome.windows.update(toolWindowId, { focused: true });
+      }
+    });
+  } else {
+    openWindow();
+  }
+});
+
+function openWindow() {
+  chrome.windows.create({
+    url: chrome.runtime.getURL('popup.html'),
+    type: 'popup',
+    width: 700,
+    height: 680,
+    focused: true,
+  }, (win) => {
+    toolWindowId = win.id;
+  });
+}
+
+chrome.windows.onRemoved.addListener((winId) => {
+  if (winId === toolWindowId) toolWindowId = null;
+});
 
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
