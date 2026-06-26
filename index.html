@@ -314,16 +314,17 @@
 
       <div class="cookie-body" id="cookie-body">
         <div class="cookie-hint">
-          Lấy <code>sessionid</code> từ TikTok:
+          Export toàn bộ cookie TikTok bằng extension <strong>Cookie Editor</strong>:
           <ol>
-            <li>Mở <strong>tiktok.com</strong> trên Chrome, đăng nhập tài khoản</li>
-            <li>Nhấn <code>F12</code> → tab <strong>Application</strong> → <strong>Cookies</strong> → <code>https://www.tiktok.com</code></li>
-            <li>Tìm dòng <code>sessionid</code> → copy giá trị cột <strong>Value</strong></li>
+            <li>Cài <strong>Cookie Editor</strong> trên Chrome (tìm trên Chrome Web Store)</li>
+            <li>Mở <strong>tiktok.com</strong> và đăng nhập tài khoản</li>
+            <li>Mở Cookie Editor → nhấn <strong>Export</strong> → <strong>Export as JSON</strong></li>
+            <li>Dán JSON vào ô bên dưới và nhấn <strong>Lưu</strong></li>
           </ol>
         </div>
-        <div class="cookie-row">
-          <input class="cookie-input" id="session-input" type="password" placeholder="Dán sessionid vào đây..." autocomplete="off" />
-          <button class="btn-save" onclick="saveCookie()">Lưu</button>
+        <textarea class="cookie-input" id="session-input" rows="5" placeholder='[{"domain":".tiktok.com","name":"sessionid","value":"..."}]' autocomplete="off" style="height:90px;resize:vertical;font-size:11px;"></textarea>
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button class="btn-save" onclick="saveCookie()" style="flex:1;">Lưu Cookie</button>
         </div>
       </div>
     </div>
@@ -405,12 +406,20 @@
 
 <script>
 // ── Cookie ──────────────────────────────────────────────────────────
-let sessionId = localStorage.getItem('tt_sessionid') || '';
+let cookiesJson = localStorage.getItem('tt_cookies_json') || '';
+
+function getAccountLabel(json) {
+  try {
+    const arr = JSON.parse(json);
+    const sid = arr.find(c => c.name === 'sessionid');
+    return sid ? sid.value.slice(0, 8) + '...' : 'Đã cài';
+  } catch { return 'Đã cài'; }
+}
 
 function updateCookieStatus() {
   const el = document.getElementById('cookie-status');
-  if (sessionId) {
-    el.textContent = 'Đã cài';
+  if (cookiesJson) {
+    el.textContent = getAccountLabel(cookiesJson);
     el.className = 'cookie-status set';
   } else {
     el.textContent = 'Chưa cài';
@@ -423,20 +432,27 @@ function toggleCookie() {
   const chevron = document.getElementById('chevron');
   const open = body.classList.toggle('open');
   chevron.classList.toggle('open', open);
-  if (open && sessionId) {
-    document.getElementById('session-input').value = sessionId;
+  if (open && cookiesJson) {
+    document.getElementById('session-input').value = cookiesJson;
   }
 }
 
 function saveCookie() {
   const val = document.getElementById('session-input').value.trim();
-  if (!val) { showToast('Vui lòng nhập sessionid'); return; }
-  sessionId = val;
-  localStorage.setItem('tt_sessionid', val);
+  if (!val) { showToast('Vui lòng nhập cookie JSON'); return; }
+  try {
+    const arr = JSON.parse(val);
+    if (!Array.isArray(arr)) throw new Error('Phải là mảng JSON');
+  } catch (e) {
+    showToast('JSON không hợp lệ: ' + e.message);
+    return;
+  }
+  cookiesJson = val;
+  localStorage.setItem('tt_cookies_json', val);
   updateCookieStatus();
   document.getElementById('cookie-body').classList.remove('open');
   document.getElementById('chevron').classList.remove('open');
-  showToast('Đã lưu Session ID');
+  showToast('Đã lưu Cookie');
 }
 
 function showToast(msg) {
@@ -540,8 +556,8 @@ async function startExtract() {
   const inputs = getLines();
   if (!inputs.length) return;
 
-  if (!sessionId) {
-    showToast('Vui lòng cài Session ID trước');
+  if (!cookiesJson) {
+    showToast('Vui lòng cài Cookie trước');
     document.getElementById('cookie-body').classList.add('open');
     document.getElementById('chevron').classList.add('open');
     return;
@@ -566,7 +582,7 @@ async function startExtract() {
     const resp = await fetch('/api/extract', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ inputs, sessionid: sessionId }),
+      body: JSON.stringify({ inputs, cookies_json: cookiesJson }),
     });
 
     const reader = resp.body.getReader();

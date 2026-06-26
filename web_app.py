@@ -4,15 +4,31 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from playwright.async_api import async_playwright
 
-def build_cookies(sessionid: str) -> list:
-    return [
-        {"name": "sessionid",    "value": sessionid, "domain": ".tiktok.com", "path": "/"},
-        {"name": "sid_tt",       "value": sessionid, "domain": ".tiktok.com", "path": "/"},
-        {"name": "sessionid_ss", "value": sessionid, "domain": ".tiktok.com", "path": "/"},
-        {"name": "tt-target-idc",     "value": "alisg", "domain": ".tiktok.com", "path": "/"},
-        {"name": "store-country-code","value": "vn",    "domain": ".tiktok.com", "path": "/"},
-        {"name": "i18next",           "value": "vi-VN", "domain": "www.tiktok.com", "path": "/"},
-    ]
+def parse_cookies_json(cookies_json: str) -> list:
+    """Convert browser-exported cookie JSON array to Playwright cookie format."""
+    raw = json.loads(cookies_json)
+    cookies = []
+    for c in raw:
+        domain = c.get("domain", "")
+        # clean markdown-rendered domains like ".[www.tiktok.com](https://...)"
+        domain = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', domain)
+        cookie = {
+            "name": c["name"],
+            "value": c["value"],
+            "domain": domain,
+            "path": c.get("path", "/"),
+        }
+        if c.get("expirationDate"):
+            cookie["expires"] = int(c["expirationDate"])
+        if c.get("httpOnly") is not None:
+            cookie["httpOnly"] = bool(c["httpOnly"])
+        if c.get("secure") is not None:
+            cookie["secure"] = bool(c["secure"])
+        same_site = c.get("sameSite")
+        if same_site and str(same_site).lower() in ("strict", "lax", "none"):
+            cookie["sameSite"] = str(same_site).capitalize()
+        cookies.append(cookie)
+    return cookies
 
 def parse_input(raw):
     raw = raw.strip()
@@ -96,7 +112,7 @@ app = FastAPI()
 
 class ExtractRequest(BaseModel):
     inputs: list[str]
-    sessionid: str = ""
+    cookies_json: str = ""
 
 @app.get("/")
 async def index():
@@ -104,12 +120,17 @@ async def index():
 
 @app.post("/api/extract")
 async def extract(req: ExtractRequest):
-    if not req.sessionid.strip():
+    if not req.cookies_json.strip():
         async def err():
-            yield 'data: {"status":"fatal","error":"Chưa nhập Session ID"}\n\n'
+            yield 'data: {"status":"fatal","error":"Chưa nhập Cookie"}\n\n'
         return StreamingResponse(err(), media_type="text/event-stream")
 
-    cookies = build_cookies(req.sessionid.strip())
+    try:
+        cookies = parse_cookies_json(req.cookies_json)
+    except Exception as e:
+        async def err():
+            yield f'data: {json.dumps({"status":"fatal","error":f"Cookie JSON không hợp lệ: {e}"})}\n\n'
+        return StreamingResponse(err(), media_type="text/event-stream")
 
     async def generate():
         try:
