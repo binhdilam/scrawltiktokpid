@@ -9,13 +9,11 @@ function parseInput(raw) {
 function extractPids(item) {
   const pids = [];
 
-  // Path 1: commerce.commerceInfo.productItems
   for (const p of item?.commerce?.commerceInfo?.productItems || []) {
     const pid = String(p.productId || p.id || '');
     if (pid && !pids.includes(pid)) pids.push(pid);
   }
 
-  // Path 2: anchors[].extra — array of product objects with "id" field
   for (const anchor of item?.anchors || []) {
     let extra = anchor.extra || anchor.anchorExtra || {};
     if (typeof extra === 'string') {
@@ -29,7 +27,6 @@ function extractPids(item) {
     }
   }
 
-  // Path 3: stickersOnItem type=2
   for (const sticker of item?.stickersOnItem || []) {
     if (sticker.stickerType === 2) {
       for (const text of sticker.stickerText || []) {
@@ -42,59 +39,81 @@ function extractPids(item) {
   return pids;
 }
 
-// Mở tab thật của Chrome, đợi TikTok load xong, đọc data từ DOM, đóng tab
+// Poll tab until itemStruct is present, then extract. Retry once if empty.
+function readDataFromTab(tabId) {
+  return new Promise((resolve) => {
+    const POLL_INTERVAL = 600;
+    const MAX_WAIT = 15000;
+    const start = Date.now();
+
+    function poll() {
+      chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const el = document.querySelector('script#__UNIVERSAL_DATA_FOR_REHYDRATION__');
+          if (!el) return null;
+          try {
+            const data = JSON.parse(el.textContent);
+            const item = data?.__DEFAULT_SCOPE__?.['webapp.video-detail']?.itemInfo?.itemStruct;
+            if (!item) return null;
+            return el.textContent;
+          } catch { return null; }
+        },
+      }, (results) => {
+        const raw = results?.[0]?.result;
+        if (raw) { resolve(raw); return; }
+        if (Date.now() - start > MAX_WAIT) { resolve(null); return; }
+        setTimeout(poll, POLL_INTERVAL);
+      });
+    }
+
+    poll();
+  });
+}
+
 function fetchVideoViaTab(videoId) {
   return new Promise((resolve) => {
     const url = `https://www.tiktok.com/@x/video/${videoId}`;
 
     chrome.tabs.create({ url, active: false }, (tab) => {
       const tabId = tab.id;
-      const timeout = setTimeout(() => {
+
+      const hardTimeout = setTimeout(() => {
         chrome.tabs.remove(tabId).catch(() => {});
-        resolve({ video_id: videoId, status: 'error', pids: [], error: 'Timeout' });
-      }, 20000);
+        resolve({ video_id: videoId, status: 'error', pids: [], error: 'Timeout (30s)' });
+      }, 30000);
 
       function onUpdated(updatedId, info) {
         if (updatedId !== tabId || info.status !== 'complete') return;
         chrome.tabs.onUpdated.removeListener(onUpdated);
-        clearTimeout(timeout);
 
-        // Đợi thêm 800ms để JS TikTok render xong
-        setTimeout(() => {
-          chrome.scripting.executeScript({
-            target: { tabId },
-            func: () => {
-              const el = document.querySelector('script#__UNIVERSAL_DATA_FOR_REHYDRATION__');
-              return el ? el.textContent : null;
-            },
-          }, (results) => {
-            chrome.tabs.remove(tabId).catch(() => {});
+        readDataFromTab(tabId).then((raw) => {
+          clearTimeout(hardTimeout);
+          chrome.tabs.remove(tabId).catch(() => {});
 
-            const raw = results?.[0]?.result;
-            if (!raw) {
-              resolve({ video_id: videoId, status: 'error', pids: [], error: 'Không lấy được data (đăng nhập TikTok chưa?)' });
+          if (!raw) {
+            resolve({ video_id: videoId, status: 'error', pids: [], error: 'Không lấy được data — hãy mở TikTok và đăng nhập trước' });
+            return;
+          }
+
+          try {
+            const data = JSON.parse(raw);
+            const item = data?.__DEFAULT_SCOPE__?.['webapp.video-detail']?.itemInfo?.itemStruct;
+            if (!item) {
+              resolve({ video_id: videoId, status: 'error', pids: [], error: 'Không tìm thấy video' });
               return;
             }
-
-            try {
-              const data = JSON.parse(raw);
-              const item = data?.__DEFAULT_SCOPE__?.['webapp.video-detail']?.itemInfo?.itemStruct;
-              if (!item) {
-                resolve({ video_id: videoId, status: 'error', pids: [], error: 'Không tìm thấy video' });
-                return;
-              }
-              resolve({
-                video_id: videoId,
-                status: 'ok',
-                pids: extractPids(item),
-                author: item.author?.uniqueId || '',
-                desc: (item.desc || '').slice(0, 100),
-              });
-            } catch (e) {
-              resolve({ video_id: videoId, status: 'error', pids: [], error: 'Parse error' });
-            }
-          });
-        }, 800);
+            resolve({
+              video_id: videoId,
+              status: 'ok',
+              pids: extractPids(item),
+              author: item.author?.uniqueId || '',
+              desc: (item.desc || '').slice(0, 100),
+            });
+          } catch {
+            resolve({ video_id: videoId, status: 'error', pids: [], error: 'Parse error' });
+          }
+        });
       }
 
       chrome.tabs.onUpdated.addListener(onUpdated);
@@ -211,7 +230,6 @@ async function startExtract() {
 
   let processed = 0, okCount = 0, errCount = 0;
 
-  // Xử lý từng video tuần tự (tránh mở quá nhiều tab cùng lúc)
   for (let i = 0; i < inputs.length; i++) {
     const raw = inputs[i];
     const videoId = parseInput(raw);
@@ -247,20 +265,18 @@ function exportCSV() {
   const rows = [['input', 'video_id', 'author', 'product_id', 'desc', 'status', 'error']];
   for (const r of allResults) {
     if (r.pids && r.pids.length > 0) {
-      for (const pid of r.pids) {
+      for (const pid of r.pids)
         rows.push([r.input || '', r.video_id || '', r.author || '', pid, r.desc || '', r.status, '']);
-      }
     } else {
       rows.push([r.input || '', r.video_id || '', r.author || '', '', r.desc || '', r.status, r.error || '']);
     }
   }
-
   const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\r\n');
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href = url;
-  a.download = `tiktok_pids_${new Date().toISOString().slice(0,19).replace(/[T:]/g,'-')}.csv`;
+  a.download = `tiktok_pids_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 }
