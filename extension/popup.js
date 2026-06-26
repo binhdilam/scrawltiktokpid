@@ -273,26 +273,48 @@ async function startExtract() {
   chrome.runtime.sendMessage({ action: 'notify', ok: okCount, err: errCount, total: inputs.length });
 }
 
-function exportCSV() {
-  const rows = [['input', 'video_id', 'author', 'product_id', 'desc', 'status', 'error']];
+function exportXLSX() {
+  const headers = ['Input', 'Video ID', 'Tác giả', 'Product ID', 'Mô tả', 'Trạng thái', 'Lỗi'];
+  const rows = [];
+
   for (const r of allResults) {
     if (!r) continue;
     if (r.pids?.length > 0) {
       for (const pid of r.pids)
-        rows.push([r.input || '', r.video_id || '', r.author || '', pid, r.desc || '', r.status, '']);
+        rows.push([r.input || '', r.video_id || '', r.author ? '@' + r.author : '', pid, r.desc || '', 'OK', '']);
     } else {
-      rows.push([r.input || '', r.video_id || '', r.author || '', '', r.desc || '', r.status, r.error || '']);
+      rows.push([r.input || '', r.video_id || '', r.author ? '@' + r.author : '', '', r.desc || '', r.status === 'ok' ? 'Không có SP' : 'Lỗi', r.error || '']);
     }
   }
-  const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\r\n');
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href = url;
-  a.download = `tiktok_pids_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.csv`;
-  a.click();
-  URL.revokeObjectURL(url);
+
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+
+  // Column widths
+  ws['!cols'] = [
+    { wch: 40 }, // Input
+    { wch: 20 }, // Video ID
+    { wch: 20 }, // Tác giả
+    { wch: 20 }, // Product ID
+    { wch: 50 }, // Mô tả
+    { wch: 12 }, // Trạng thái
+    { wch: 30 }, // Lỗi
+  ];
+
+  // Header style (bold, blue bg)
+  const headerStyle = {
+    font: { bold: true, color: { rgb: 'FFFFFF' } },
+    fill: { fgColor: { rgb: '185CFF' } },
+    alignment: { horizontal: 'center' },
+  };
+  headers.forEach((_, i) => {
+    const cell = XLSX.utils.encode_cell({ r: 0, c: i });
+    if (ws[cell]) ws[cell].s = headerStyle;
+  });
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'TikTok PIDs');
+  XLSX.writeFile(wb, `tiktok_pids_${new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')}.xlsx`);
 }
 
 btnRun.addEventListener('click', startExtract);
-btnExport.addEventListener('click', exportCSV);
+btnExport.addEventListener('click', exportXLSX);
