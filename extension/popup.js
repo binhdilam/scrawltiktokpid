@@ -219,12 +219,15 @@ tbody.addEventListener('click', e => {
   if (btn) copyText(btn.dataset.pid, btn);
 });
 
+// Số tab chạy đồng thời — tăng lên 4-5 nếu muốn nhanh hơn, nhưng dễ bị TikTok rate-limit hơn
+const CONCURRENCY = 3;
+
 async function startExtract() {
   const inputs = getLines();
   if (!inputs.length || isRunning) return;
 
   isRunning = true;
-  allResults = [];
+  allResults = new Array(inputs.length).fill(null);
   btnRun.disabled = true;
   btnExport.disabled = true;
   spinner.classList.add('active');
@@ -237,39 +240,54 @@ async function startExtract() {
     return `<tr id="row-${i}">${renderRow({ video_id: guessId, pids: [], status: 'processing' }, true)}</tr>`;
   }).join('');
 
-  let processed = 0, okCount = 0, errCount = 0;
+  let processed = 0, okCount = 0, errCount = 0, nextIdx = 0;
 
-  for (let i = 0; i < inputs.length; i++) {
-    const raw     = inputs[i];
-    const videoId = parseInput(raw);
-    let result;
+  await new Promise((resolve) => {
+    function onDone(i, result) {
+      allResults[i] = result;
+      processed++;
+      if (result.status === 'ok' && result.pids.length > 0) okCount++;
+      else errCount++;
 
-    if (!videoId) {
-      result = { input: raw, video_id: '—', status: 'error', pids: [], error: 'Không parse được ID' };
-    } else {
-      result = await fetchVideoViaTab(videoId);
-      result.input = raw;
+      setMetrics(processed, okCount, errCount);
+      progressBar.style.width = `${Math.round((processed / inputs.length) * 100)}%`;
+
+      const row = document.getElementById(`row-${i}`);
+      if (row) row.innerHTML = renderRow(result);
+
+      if (processed === inputs.length) { resolve(); return; }
+      launchNext();
     }
 
-    allResults.push(result);
-    processed++;
-    if (result.status === 'ok' && result.pids.length > 0) okCount++;
-    else errCount++;
+    function launchNext() {
+      if (nextIdx >= inputs.length) return;
+      const i = nextIdx++;
+      const raw = inputs[i];
+      const videoId = parseInput(raw);
 
-    setMetrics(processed, okCount, errCount);
-    progressBar.style.width = `${Math.round((processed / inputs.length) * 100)}%`;
+      if (!videoId) {
+        onDone(i, { input: raw, video_id: '—', status: 'error', pids: [], error: 'Không parse được ID' });
+        return;
+      }
 
-    const row = document.getElementById(`row-${i}`);
-    if (row) row.innerHTML = renderRow(result);
-  }
+      fetchVideoViaTab(videoId).then(r => {
+        r.input = raw;
+        onDone(i, r);
+      });
+    }
+
+    // Khởi động CONCURRENCY tab đầu tiên cùng lúc
+    const initial = Math.min(CONCURRENCY, inputs.length);
+    for (let k = 0; k < initial; k++) launchNext();
+  });
 
   spinner.classList.remove('active');
   progressWrap.classList.remove('active');
   btnRun.disabled = false;
   isRunning = false;
+  allResults = allResults.filter(Boolean);
   if (allResults.length) btnExport.disabled = false;
 
-  // Gửi notification qua background
   chrome.runtime.sendMessage({ action: 'notify', ok: okCount, err: errCount, total: inputs.length });
 }
 
