@@ -163,7 +163,7 @@ function renderRow(r, placeholder = false) {
       ? `<span class="mono" style="color:#c5ccd8">—</span>`
       : pids.map(pid => `
           <div class="pid-cell">
-            <span class="pid-val">${pid}</span>
+            <a class="pid-val" href="https://www.tiktok.com/shop/vn/pdp/${pid}?source=product_detail&enter_from=product_detail&enter_method=feed_list_brand_cat" target="_blank" rel="noopener noreferrer">${pid}</a>
             <button class="btn-copy" data-pid="${pid}" title="Copy">${copyIcon()}</button>
           </div>`).join('');
 
